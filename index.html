@@ -2564,7 +2564,6 @@ function submitReport() {
   const plagFile = plagInput.files[0];
   const aiFile = aiNotPossible ? null : aiInput.files[0];
 
-  // Read files as data URLs so they can be downloaded for real
   const readFile = (file) => new Promise((resolve) => {
     if (!file) return resolve(null);
     const reader = new FileReader();
@@ -2572,33 +2571,32 @@ function submitReport() {
     reader.readAsDataURL(file);
   });
 
-  showToast('Uploading reports...', 'info');
+  // Show uploading state on button
+  const submitBtn = document.querySelector('#upload-modal .btn-primary');
+  if (submitBtn) { submitBtn.textContent = '⏳ Saving...'; submitBtn.disabled = true; }
+
+  showToast('Saving reports...', 'info');
 
   Promise.all([readFile(plagFile), readFile(aiFile)]).then(async ([plagData, aiData]) => {
+    // Update order in memory immediately
     order.status = 'completed';
     order.completedAt = Date.now();
     order.reportUploaded = true;
     order.plagReport = plagFile ? plagFile.name : null;
     order.plagReportData = plagData;
+    order.plagReportUrl = plagData; // store directly
     order.aiReport = aiFile ? aiFile.name : null;
     order.aiReportData = aiData;
+    order.aiReportUrl = aiData; // store directly
     order.aiNotPossible = aiNotPossible;
     order.aiReason = aiNotPossible ? aiReason : null;
     order.verificationDeadline = Date.now() + (24 * 60 * 60 * 1000);
     order.verificationStatus = 'pending';
 
-    // Upload reports to Supabase Storage FIRST, then save order with URLs
-    if (plagData) {
-      const plagUrl = await uploadToStorage(plagData, plagFile.name, `reports/${order.id}/plag`);
-      if (plagUrl) order.plagReportUrl = plagUrl;
-    }
-    if (aiData) {
-      const aiUrl = await uploadToStorage(aiData, aiFile.name, `reports/${order.id}/ai`);
-      if (aiUrl) order.aiReportUrl = aiUrl;
-    }
-
-    // Now save order with all URLs included
-    saveOrderStatus(order);
+    // Close modal and refresh immediately — don't wait for Supabase
+    closeModal('upload-modal');
+    showToast('✅ Reports uploaded! Order marked as complete.', 'success');
+    refreshCheckerDash();
 
     let notifMsg = `Your plagiarism report for "${order.fileName}" is ready to download.`;
     if (aiNotPossible) {
@@ -2607,11 +2605,10 @@ function submitReport() {
       notifMsg += ` AI detection report is also ready.`;
     }
     addNotification(order.clientId, 'Reports Ready! ✅', notifMsg);
-    sendEmail(order.clientId, 'Your CheckPlag reports are ready', `Your reports for order #${order.id} (${order.fileName}) are ready to download. Log in to your dashboard to get them.`);
-    closeModal('upload-modal');
-    showToast('Reports uploaded! Order marked as complete.', 'success');
+    sendEmail(order.clientId, 'Your CheckPlag reports are ready', `Your reports for order #${order.id} (${order.fileName}) are ready to download.`);
 
-    refreshCheckerDash();
+    // Save to Supabase in background — don't block UI
+    saveOrderStatus(order).catch(e => console.error('Background save error:', e));
   });
 }
 
